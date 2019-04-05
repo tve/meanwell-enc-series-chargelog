@@ -254,8 +254,8 @@ def print_settings(csettings):
 
 #---graph----------------------------------------------------------------------
 
-m_volt_max   = 14.5  #V
-m_curr_max   = 8.0   #A
+m_volt_max   = 15.0  #V
+m_curr_max   = 24.0   #A
 m_sec_max    = 10800 #seconds
 m_x_maxchars = 80    #characters
 m_y_maxchars = 32    #characters
@@ -573,15 +573,15 @@ def check_charger_id():
         print_error('No (valid) answer from charger.')
         err = True
 
-    if not err:
-        if (cmodel != 0) or (ctype != 0):
-            print_warning('Detected charger: %s.' % cname)
-            print_warning('The software has been tested only with the ENC-120-12')
-            print_warning('so far. Parameter checks/limits are only valid for the')
-            print_warning('ENC-120-12.')
-            answer = input('Continue anyway (y/n)? ')
-            if answer != 'y':
-                err = True
+    #if not err:
+        #if (cmodel != 0) or (ctype != 0):
+        #    print_warning('Detected charger: %s.' % cname)
+        #    print_warning('The software has been tested only with the ENC-120-12')
+        #    print_warning('so far. Parameter checks/limits are only valid for the')
+        #    print_warning('ENC-120-12.')
+        #    answer = input('Continue anyway (y/n)? ')
+        #    if answer != 'y':
+        #        err = True
 
     if err:
         return (False, -1, -1, 'unknown')
@@ -614,8 +614,8 @@ def read_settings():
 #currently only for ENC-120-12 (cmodel 0, ctype 0)
 def check_settings(csettings, cmodel, ctype):
     result = True
-    if (csettings[ckey_cc] < 2.4) or (csettings[ckey_cc] > 8.0):
-        print_warning('constcurr = %.1f, allowed range 2.4 <= constcurr <= 8.0.' % csettings[ckey_cc])
+    if (csettings[ckey_cc] < 2.4) or (csettings[ckey_cc] > 24.0):
+        print_warning('constcurr = %.1f, allowed range 2.4 <= constcurr <= 24.0.' % csettings[ckey_cc])
         result = False
     if (csettings[ckey_cv] < 9.0) or (csettings[ckey_cv] > 15.0):
         print_warning('constvolt = %.1f, allowed range 9.0 <= constvolt <= 15.0.' % csettings[ckey_cv])
@@ -1028,9 +1028,9 @@ def mon(args):
         result = check_settings(csettings, cmodel, ctype)
         if not result:
             print_warning('Charger settings are out of range.')
-            answer = input('Continue (y/n)? ')
-            if answer != 'y':
-                err = True
+            #answer = input('Continue (y/n)? ')
+            #if answer != 'y':
+            #    err = True
 
     if not err:
         #round-half-up with int( + 0.5) required here (round() of Python 3 is round-towards-even)
@@ -1079,6 +1079,40 @@ def dbg(args):
         else:
             print_error('One of the arguments of the sub-command \'dbg\'must be specified.')
 
+#---query----------------------------------------------------------------------
+
+def qry_read_all():
+    cmd_sets = ((cmd_read_constcurr, reply_read_constcurr, 'constcurr', 100),
+                (cmd_read_constvolt, reply_read_constvolt, 'constvolt', 10),
+                (cmd_read_floatvolt, reply_read_floatvolt, 'floatvolt', 10),
+                (cmd_read_tapercurr, reply_read_tapercurr, 'tapercurr', 100),
+                (cmd_read_config,    reply_read_config,    'tempcomp', 1),
+                (cmd_read_state,     reply_read_state,     'stage', 1),
+                (cmd_read_vout,      reply_read_vout,      'vout', 10),
+                (cmd_read_iout,      reply_read_iout,      'iout', 100),
+                (cmd_read_temp,      reply_read_temp,      'temp', 1))
+    print('{ ', end='')
+    for cmd_set in cmd_sets:
+        enc_tx(cmd_set[0])
+        (result, payload) = enc_rx(5, cmd_set[1], 2)
+        print('"%s": ' % cmd_set[2], end = '')
+        if result:
+            value = (payload[0] * 0x100 + payload[1]) / cmd_set[3]
+            if (cmd_set[0] == cmd_read_state) and (value == 4):
+                value = 3
+            if (cmd_set[0] == cmd_read_config):
+                value = [0, -3, -4, -5][int(value)]
+            print('%.2f, ' % value, end='')
+        else:
+            print('null', end='')
+        time.sleep(0.01)
+    print(' "x":0 }');
+
+def qry(args):
+    err = com_open(args.comport)
+    if not err:
+        qry_read_all()
+
 #---parser---------------------------------------------------------------------
 
 def parse_print_help():
@@ -1089,6 +1123,7 @@ def parse_print_help():
     print('       chargelog mon <comport> <logfile> [-ri <readinterv>]')
     print('          [-gi <graphinterv>] [-width <graphwidth>]')
     print('       chargelog dbg <comport> [-rawread]')
+    print('       chargelog qry <comport>')
     print()
     print('       constcurr: constant current of stage 1 in Ampere')
     print('       constvolt: constant voltage of stage 2 in Volt')
@@ -1143,6 +1178,9 @@ def parse_cmdline():
     dbg_parser.add_argument('comport')
     dbg_parser.add_argument('-rawread', action='store_true')
 
+    qry_parser = subparsers.add_parser('qry', add_help = False)
+    qry_parser.add_argument('comport')
+
     args = main_parser.parse_args() #exits in case of wrong args
 
     return args
@@ -1164,28 +1202,32 @@ def signal_handler(signal, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
-print('  _____ _                          _')
-print(' / ____| |                        | |')
-print('| |    | |__   __ _ _ __ __ _  ___| |     ___   __ _')
-print('| |    | \'_ \ / _` | \'__/ _` |/ _ \ |    / _ \ / _` |')
-print('| |____| | | | (_| | | | (_| |  __/ |___| (_) | (_| |')
-print(' \_____|_| |_|\__,_|_|  \__, |\___|______\___/ \__, |')
-print('                         __/ |                  __/ |')
-print('                        |___/                  |___/')
-print('Version %d.%d' % (version_major, version_minor))
-print()
-print('press ctrl+c to exit')
-print()
-
 args = parse_cmdline() #exits in case of wrong args
+
+if args.subcmd != 'qry':
+    print('  _____ _                          _')
+    print(' / ____| |                        | |')
+    print('| |    | |__   __ _ _ __ __ _  ___| |     ___   __ _')
+    print('| |    | \'_ \ / _` | \'__/ _` |/ _ \ |    / _ \ / _` |')
+    print('| |____| | | | (_| | | | (_| |  __/ |___| (_) | (_| |')
+    print(' \_____|_| |_|\__,_|_|  \__, |\___|______\___/ \__, |')
+    print('                         __/ |                  __/ |')
+    print('                        |___/                  |___/')
+    print('Version %d.%d' % (version_major, version_minor))
+    print()
+    print('press ctrl+c to exit')
+    print()
+
 if args.subcmd == 'prg':
     prg(args)
 elif args.subcmd == 'mon':
     mon(args)
 elif args.subcmd == 'dbg':
     dbg(args)
+elif args.subcmd == 'qry':
+    qry(args)
 else:
-    print_error('Argument subcmd, choose from \'prg\', \'mon\', \'dbg\'.')
+    print_error('Argument subcmd, choose from \'prg\', \'mon\', \'dbg\', \'qry\'.')
 
 com_close()
 log_close()
